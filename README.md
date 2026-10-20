@@ -52,8 +52,14 @@ hydroxide auth <username>
 
 ProtonMail may ask you to complete a human verification challenge (CAPTCHA). In
 that case hydroxide serves the challenge on a local HTTP server and prints its
-`http://127.0.0.1:<port>` address: open it in a web browser and complete the
-CAPTCHA, and hydroxide will resume logging in on its own.
+`http://127.0.0.1:<port>` address. It also tries to open your default browser.
+Complete the CAPTCHA in the browser, then return to the terminal for any 2FA
+code or mailbox password prompt. hydroxide leaves terminal input available for
+these prompts rather than reading a verification token from stdin.
+
+If no browser opens, open the printed URL manually. When running hydroxide on
+a remote server, forward the printed port to your computer (for example,
+`ssh -L <port>:127.0.0.1:<port> <server>`) and open the URL locally.
 
 Once you're logged in, a "bridge password" will be printed. Don't close your
 terminal yet, as this password is not stored anywhere by hydroxide and will be
