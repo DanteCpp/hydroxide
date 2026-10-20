@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -10,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 
 	"github.com/emersion/hydroxide/protonmail"
@@ -214,6 +215,10 @@ func (s *humanVerifyServer) proxy(w http.ResponseWriter, r *http.Request, base *
 // in a web browser, then configures c to send the completed challenge along
 // with subsequent requests.
 func askHumanVerification(c *protonmail.Client, details *protonmail.HumanVerificationDetails) error {
+	return askHumanVerificationWithBrowser(c, details, openBrowser)
+}
+
+func askHumanVerificationWithBrowser(c *protonmail.Client, details *protonmail.HumanVerificationDetails, open func(string) error) error {
 	if !details.HasMethod(protonmail.HumanVerificationCaptcha) {
 		return fmt.Errorf("ProtonMail requires human verification, but hydroxide only supports the CAPTCHA method (offered: %v)", strings.Join(details.Methods, ", "))
 	}
@@ -251,27 +256,42 @@ func askHumanVerification(c *protonmail.Client, details *protonmail.HumanVerific
 	fmt.Fprintf(os.Stderr, "ProtonMail requires human verification.\n")
 	fmt.Fprintf(os.Stderr, "Open the following URL in a web browser and complete the CAPTCHA:\n\n")
 	fmt.Fprintf(os.Stderr, "\thttp://%v/\n\n", ln.Addr())
-	fmt.Fprintf(os.Stderr, "Waiting for the CAPTCHA to be completed (paste a verification token and press Enter instead, if needed)...\n")
+	fmt.Fprintf(os.Stderr, "Waiting for the CAPTCHA to be completed in your browser...\n")
 
-	// Let the user paste a token themselves, in case the browser can't reach
-	// the local server
-	go func() {
-		scanner := bufio.NewScanner(os.Stdin)
-		if !scanner.Scan() {
-			return
-		}
-		if token := strings.TrimSpace(scanner.Text()); token != "" {
-			select {
-			case s.tokens <- token:
-			default:
-			}
-		}
-	}()
+	// Keep stdin available for the next authentication step. A background
+	// scanner would remain blocked after browser verification and could
+	// consume the user's TOTP code or mailbox password instead.
+	if err := open(fmt.Sprintf("http://%v/", ln.Addr())); err != nil {
+		log.Printf("could not open a browser: %v; open the URL above manually", err)
+	}
 
 	token := <-s.tokens
 	c.HumanVerification = &protonmail.HumanVerification{
 		Token: token,
 		Type:  protonmail.HumanVerificationCaptcha,
 	}
+	return nil
+}
+
+// openBrowser starts the platform's URL handler without waiting for the browser
+// to close. The printed URL remains available on systems without a browser.
+func openBrowser(url string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() {
+		if err := cmd.Wait(); err != nil {
+			log.Printf("could not open a browser: %v; open the CAPTCHA URL manually", err)
+		}
+	}()
 	return nil
 }
